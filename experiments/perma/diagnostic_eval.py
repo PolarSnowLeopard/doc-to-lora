@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import traceback
 
 import torch
 
@@ -35,32 +36,38 @@ from data_adapter import (
     ALL_USER_IDS,
 )
 
+MAX_CTX_TOKENS = 7000
+
 
 def build_mcq_prompt(question: str, options: list[str]) -> str:
+    n = len(options)
+    max_letter = chr(65 + n - 1)
     opts_text = "\n".join(
         f"{chr(65 + i)}. {opt}" for i, opt in enumerate(options)
     )
     return (
         f"Question: {question}\n\n"
         f"Options:\n{opts_text}\n\n"
-        f"Answer with the letter only (A, B, C, or D):"
+        f"Answer with the letter only (A-{max_letter}):"
     )
 
 
-def extract_answer(text: str) -> str:
+def extract_answer(text: str, n_options: int) -> str:
+    max_letter = chr(65 + n_options - 1)
     text = text.strip()
-    match = re.search(r"\b([A-D])\b", text)
+    match = re.search(rf"\b([A-{max_letter}])\b", text)
     return match.group(1) if match else ""
 
 
-def evaluate_task_oracle(
-    model, tokenizer, task: PermaTask,
-) -> dict:
-    """Oracle: 拼全部 session 一次性 internalize"""
-    full_text = sessions_to_full_text(task.sessions)
-    model.reset()
-    model.internalize(full_text)
+def safe_internalize(model, text, tokenizer):
+    ctx_tokenizer = get_tokenizer(model.ctx_encoder.base_model.name_or_path)
+    tokens = ctx_tokenizer.encode(text, add_special_tokens=False)
+    if len(tokens) > MAX_CTX_TOKENS:
+        text = ctx_tokenizer.decode(tokens[:MAX_CTX_TOKENS], skip_special_tokens=True)
+    model.internalize(text)
 
+
+def ask_mcq(model, tokenizer, task: PermaTask) -> str:
     prompt = build_mcq_prompt(task.question, task.options)
     chat = [{"role": "user", "content": prompt}]
     input_ids = tokenizer.apply_chat_template(
@@ -70,7 +77,19 @@ def evaluate_task_oracle(
 
     with torch.inference_mode():
         out = model.generate(input_ids=input_ids, max_new_tokens=16)
-    pred = extract_answer(tokenizer.decode(out[0], skip_special_tokens=True))
+    new_tokens = out[0][input_ids.shape[-1]:]
+    generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    return extract_answer(generated_text, len(task.options))
+
+
+def evaluate_task_oracle(
+    model, tokenizer, task: PermaTask,
+) -> dict:
+    """Oracle: 拼全部 session 一次性 internalize"""
+    full_text = sessions_to_full_text(task.sessions)
+    model.reset()
+    safe_internalize(model, full_text, tokenizer)
+    pred = ask_mcq(model, tokenizer, task)
 
     return {
         "task_id": task.task_id,
@@ -88,18 +107,8 @@ def evaluate_task_single_shot(
     """Single-shot: 只用最后一个 session"""
     last_text = session_to_text(task.sessions[-1])
     model.reset()
-    model.internalize(last_text)
-
-    prompt = build_mcq_prompt(task.question, task.options)
-    chat = [{"role": "user", "content": prompt}]
-    input_ids = tokenizer.apply_chat_template(
-        chat, add_special_tokens=False,
-        add_generation_prompt=True, return_tensors="pt",
-    ).to(model.device)
-
-    with torch.inference_mode():
-        out = model.generate(input_ids=input_ids, max_new_tokens=16)
-    pred = extract_answer(tokenizer.decode(out[0], skip_special_tokens=True))
+    safe_internalize(model, last_text, tokenizer)
+    pred = ask_mcq(model, tokenizer, task)
 
     return {
         "task_id": task.task_id,
@@ -118,7 +127,7 @@ def evaluate_task_naive_merge(
     for session in task.sessions:
         text = session_to_text(session)
         model.reset()
-        model.internalize(text)
+        safe_internalize(model, text, tokenizer)
         lora_copy = copy.deepcopy(model.generated_loras)
         all_loras.append(lora_copy)
 
@@ -134,16 +143,7 @@ def evaluate_task_naive_merge(
         model.generated_loras = all_loras[0]
 
     model.patch_lora_forward()
-    prompt = build_mcq_prompt(task.question, task.options)
-    chat = [{"role": "user", "content": prompt}]
-    input_ids = tokenizer.apply_chat_template(
-        chat, add_special_tokens=False,
-        add_generation_prompt=True, return_tensors="pt",
-    ).to(model.device)
-
-    with torch.inference_mode():
-        out = model.generate(input_ids=input_ids, max_new_tokens=16)
-    pred = extract_answer(tokenizer.decode(out[0], skip_special_tokens=True))
+    pred = ask_mcq(model, tokenizer, task)
 
     return {
         "task_id": task.task_id,
@@ -186,12 +186,23 @@ def run_diagnostic(args):
 
         results = []
         for i, task in enumerate(tasks):
-            res = eval_fn[mode](model, tokenizer, task)
+            try:
+                res = eval_fn[mode](model, tokenizer, task)
+            except Exception as e:
+                print(f"  [{i+1}/{len(tasks)}] ERROR task={task.task_id}: {e}")
+                traceback.print_exc()
+                res = {
+                    "task_id": task.task_id,
+                    "task_type": task.task_type,
+                    "pred": "",
+                    "gold": task.gold_label,
+                    "correct": False,
+                    "error": str(e),
+                }
             results.append(res)
             status = "✓" if res["correct"] else "✗"
             print(f"  [{i+1}/{len(tasks)}] {status} task={task.task_id} type={task.task_type} pred={res['pred']} gold={res['gold']}")
 
-        # 按 task_type 分组统计
         acc_all = sum(r["correct"] for r in results) / max(len(results), 1)
         print(f"\n  Overall accuracy: {acc_all:.3f} ({sum(r['correct'] for r in results)}/{len(results)})")
 
