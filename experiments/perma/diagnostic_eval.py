@@ -156,6 +156,37 @@ def evaluate_task_naive_merge(
     }
 
 
+def evaluate_task_no_lora(
+    model, tokenizer, task: PermaTask,
+) -> dict:
+    """No LoRA: 不 internalize 任何内容，测试基座模型 + prompt 是否正常工作"""
+    model.reset()
+    prompt = build_mcq_prompt(task.question, task.options)
+    full_text = sessions_to_full_text(task.sessions[-2:])
+    content = f"Context:\n{full_text}\n\n{prompt}"
+    chat = [{"role": "user", "content": content}]
+    input_ids = tokenizer.apply_chat_template(
+        chat, add_special_tokens=False,
+        add_generation_prompt=True, return_tensors="pt",
+    ).to(model.device)
+
+    with torch.inference_mode():
+        out = model.base_model.generate(input_ids=input_ids, max_new_tokens=16)
+    new_tokens = out[0][input_ids.shape[-1]:]
+    generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    raw_text = tokenizer.decode(new_tokens, skip_special_tokens=False)
+    print(f"    [DEBUG no_lora] raw='{raw_text}' clean='{generated_text}'")
+    pred = extract_answer(generated_text, len(task.options))
+
+    return {
+        "task_id": task.task_id,
+        "task_type": task.task_type,
+        "pred": pred,
+        "gold": task.gold_label,
+        "correct": pred == task.gold_label,
+    }
+
+
 def run_diagnostic(args):
     print(f"Loading model from {args.checkpoint} ...")
     state_dict = torch.load(args.checkpoint, weights_only=False)
@@ -179,6 +210,7 @@ def run_diagnostic(args):
         "oracle": evaluate_task_oracle,
         "single_shot": evaluate_task_single_shot,
         "naive_merge": evaluate_task_naive_merge,
+        "no_lora": evaluate_task_no_lora,
     }
 
     for mode in modes:
@@ -225,7 +257,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--mode", type=str, default="all",
-                        choices=["all", "oracle", "single_shot", "naive_merge"])
+                        choices=["all", "oracle", "single_shot", "naive_merge", "no_lora"])
     parser.add_argument("--max_users", type=int, default=2,
                         help="Max users to evaluate (0 = all)")
     parser.add_argument("--output_dir", type=str,
