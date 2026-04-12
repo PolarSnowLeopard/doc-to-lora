@@ -79,6 +79,8 @@ def ask_mcq(model, tokenizer, task: PermaTask) -> str:
         out = model.generate(input_ids=input_ids, max_new_tokens=16)
     new_tokens = out[0][input_ids.shape[-1]:]
     generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    raw_text = tokenizer.decode(new_tokens, skip_special_tokens=False)
+    print(f"    [DEBUG] new_tokens={new_tokens.tolist()} raw='{raw_text}' clean='{generated_text}'")
     return extract_answer(generated_text, len(task.options))
 
 
