@@ -159,7 +159,6 @@ def run_diagnostic(args):
     state_dict = torch.load(args.checkpoint, weights_only=False)
     model = ModulatedPretrainedModel.from_state_dict(
         state_dict, train=False, use_sequence_packing=False,
-        use_flash_attn=False,
     )
     model.reset()
     tokenizer = get_tokenizer(model.base_model.name_or_path)
