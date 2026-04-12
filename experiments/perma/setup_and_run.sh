@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+export PATH="$HOME/.local/bin:$PATH"
+
 echo "=== Step 1: Install doc-to-lora ==="
 cd "$(dirname "$0")/../.."
 ./install.sh
