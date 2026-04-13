@@ -6,13 +6,14 @@ export HF_ENDPOINT="https://hf-mirror.com"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 CKPT="trained_d2l/mistral_7b_d2l/checkpoint-20000/pytorch_model.bin"
+DATA_DIR="data/raw_datasets/perma"
 
 # Step 1: 生成训练数据
 echo "=== Preparing training data ==="
 PERMA_DATA_ROOT=experiments/perma/data \
   uv run experiments/perma/prepare_train_data.py \
       --test_user 334 \
-      --output_dir experiments/perma/train_data
+      --output_dir "$DATA_DIR"
 
 # Step 2: 微调
 echo "=== Fine-tuning ==="

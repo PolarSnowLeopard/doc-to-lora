@@ -18,8 +18,8 @@ gradient_accumulation_steps: 4
 max_packed_inp_len: 4096
 max_packed_ctx_len: 4096
 
-# data
+# data (parquet files are loaded relative to data/raw_datasets/)
 train_ds_names:
-  - experiments/perma/train_data/train.parquet
+  - perma/train.parquet
 
 val_ds_names: null
