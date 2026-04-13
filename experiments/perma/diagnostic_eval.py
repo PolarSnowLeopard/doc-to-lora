@@ -36,7 +36,7 @@ from data_adapter import (
     ALL_USER_IDS,
 )
 
-MAX_CTX_TOKENS = 28000
+MAX_CTX_TOKENS = 4000
 
 
 def build_mcq_prompt(question: str, options: list[str]) -> str:
@@ -248,6 +248,8 @@ def run_diagnostic(args):
                     "error": str(e),
                 }
             results.append(res)
+            model.reset()
+            torch.cuda.empty_cache()
             status = "✓" if res["correct"] else "✗"
             print(f"  [{i+1}/{len(tasks)}] {status} task={task.task_id} type={task.task_type} pred={res['pred']} gold={res['gold']}")
 
