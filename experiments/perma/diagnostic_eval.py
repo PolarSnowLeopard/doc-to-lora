@@ -159,16 +159,24 @@ def evaluate_task_naive_merge(
 def evaluate_task_no_lora(
     model, tokenizer, task: PermaTask,
 ) -> dict:
-    """No LoRA: 不 internalize 任何内容，测试基座模型 + prompt 是否正常工作"""
+    """No LoRA: 基座模型 + 截断上下文，验证模型能否正常回答 MCQ"""
     model.reset()
     prompt = build_mcq_prompt(task.question, task.options)
-    full_text = sessions_to_full_text(task.sessions[-2:])
-    content = f"Context:\n{full_text}\n\n{prompt}"
+    last_session = session_to_text(task.sessions[-1])
+    # 截断上下文确保总长度在 7K token 以内（留 1K 给 prompt + 生成）
+    ctx_tokens = tokenizer.encode(last_session, add_special_tokens=False)
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+    max_ctx = 7000 - len(prompt_tokens) - 100
+    if len(ctx_tokens) > max_ctx:
+        last_session = tokenizer.decode(ctx_tokens[:max(max_ctx, 500)], skip_special_tokens=True)
+
+    content = f"Based on the following conversation, answer the question.\n\nConversation:\n{last_session}\n\n{prompt}"
     chat = [{"role": "user", "content": content}]
     input_ids = tokenizer.apply_chat_template(
         chat, add_special_tokens=False,
         add_generation_prompt=True, return_tensors="pt",
     ).to(model.device)
+    print(f"    [DEBUG no_lora] input_len={input_ids.shape[-1]}")
 
     with torch.inference_mode():
         out = model.base_model.generate(input_ids=input_ids, max_new_tokens=16)
