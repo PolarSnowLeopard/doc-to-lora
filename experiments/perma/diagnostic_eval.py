@@ -156,26 +156,36 @@ def evaluate_task_naive_merge(
     }
 
 
+def truncate_text_to_tokens(text: str, tokenizer, max_tokens: int) -> str:
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+    if len(tokens) <= max_tokens:
+        return text
+    return tokenizer.decode(tokens[:max_tokens], skip_special_tokens=True)
+
+
 def evaluate_task_no_lora(
     model, tokenizer, task: PermaTask,
 ) -> dict:
-    """No LoRA: 基座模型 + 截断上下文，验证模型能否正常回答 MCQ"""
+    """No LoRA: 基座模型 + 上下文放 prompt，验证模型能否正常回答 MCQ"""
     model.reset()
     prompt = build_mcq_prompt(task.question, task.options)
     last_session = session_to_text(task.sessions[-1])
+    # 在文本层面截断上下文，保留 chat template 完整性
+    last_session = truncate_text_to_tokens(last_session, tokenizer, 28000)
+
     content = f"Based on the following conversation, answer the question.\n\nConversation:\n{last_session}\n\n{prompt}"
     chat = [{"role": "user", "content": content}]
     input_ids = tokenizer.apply_chat_template(
         chat, add_special_tokens=False,
         add_generation_prompt=True, return_tensors="pt",
     ).to(model.device)
-    # 硬截断到 7500 token，保留末尾（包含问题和选项）
-    if input_ids.shape[-1] > 7500:
-        input_ids = input_ids[:, -7500:]
     print(f"    [DEBUG no_lora] input_len={input_ids.shape[-1]}")
 
     with torch.inference_mode():
-        out = model.base_model.generate(input_ids=input_ids, max_new_tokens=32)
+        out = model.base_model.generate(
+            input_ids=input_ids, max_new_tokens=32,
+            pad_token_id=tokenizer.eos_token_id,
+        )
     new_tokens = out[0][input_ids.shape[-1]:]
     generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
     raw_text = tokenizer.decode(new_tokens, skip_special_tokens=False)
