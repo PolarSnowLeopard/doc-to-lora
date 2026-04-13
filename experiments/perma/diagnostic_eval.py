@@ -229,6 +229,18 @@ def run_diagnostic(args):
         "no_lora": evaluate_task_no_lora,
     }
 
+    type_names = {1: "Zero-Memory", 2: "In-Time", 3: "Post-Intervention"}
+
+    def print_accuracy(results, label=""):
+        if not results:
+            return
+        acc = sum(r["correct"] for r in results) / len(results)
+        print(f"  {label}accuracy: {acc:.3f} ({sum(r['correct'] for r in results)}/{len(results)})")
+        for t in sorted(set(r["task_type"] for r in results)):
+            group = [r for r in results if r["task_type"] == t]
+            a = sum(r["correct"] for r in group) / len(group)
+            print(f"    Type {t} ({type_names.get(t, '?')}): {a:.3f} ({sum(r['correct'] for r in group)}/{len(group)})")
+
     for mode in modes:
         print(f"\n{'='*60}")
         print(f"  Running: {mode}")
@@ -249,26 +261,29 @@ def run_diagnostic(args):
                     "correct": False,
                     "error": str(e),
                 }
+            res["user_id"] = task.user_id
             results.append(res)
             model.reset()
             torch.cuda.empty_cache()
             status = "✓" if res["correct"] else "✗"
             print(f"  [{i+1}/{len(tasks)}] {status} task={task.task_id} type={task.task_type} pred={res['pred']} gold={res['gold']}")
 
-        acc_all = sum(r["correct"] for r in results) / max(len(results), 1)
-        print(f"\n  Overall accuracy: {acc_all:.3f} ({sum(r['correct'] for r in results)}/{len(results)})")
+        print(f"\n  --- Overall ---")
+        print_accuracy(results)
 
-        for t in sorted(set(r["task_type"] for r in results)):
-            group = [r for r in results if r["task_type"] == t]
-            acc = sum(r["correct"] for r in group) / max(len(group), 1)
-            type_names = {1: "Zero-Memory", 2: "In-Time", 3: "Post-Intervention"}
-            print(f"  Type {t} ({type_names.get(t, '?')}): {acc:.3f} ({sum(r['correct'] for r in group)}/{len(group)})")
+        user_ids_in_results = sorted(set(r["user_id"] for r in results))
+        if len(user_ids_in_results) > 1:
+            for uid in user_ids_in_results:
+                user_results = [r for r in results if r["user_id"] == uid]
+                print(f"\n  --- User {uid} ---")
+                print_accuracy(user_results)
 
-        out_path = os.path.join(args.output_dir, f"diagnostic_{mode}.json")
+        n_users = len(user_ids_in_results)
+        out_path = os.path.join(args.output_dir, f"diagnostic_{mode}_{n_users}users.json")
         os.makedirs(args.output_dir, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump(results, f, indent=2)
-        print(f"  Results saved to {out_path}")
+        print(f"\n  Results saved to {out_path}")
 
 
 if __name__ == "__main__":
