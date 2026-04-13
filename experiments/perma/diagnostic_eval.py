@@ -36,7 +36,7 @@ from data_adapter import (
     ALL_USER_IDS,
 )
 
-MAX_CTX_TOKENS = 7000
+MAX_CTX_TOKENS = 28000
 
 
 def build_mcq_prompt(question: str, options: list[str]) -> str:
