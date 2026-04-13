@@ -15,8 +15,8 @@ num_blocks: 9
 num_self_attn_per_block: 0
 
 gradient_accumulation_steps: 8
-max_packed_inp_len: 512
-max_packed_ctx_len: 1024
+max_packed_inp_len: 2048
+max_packed_ctx_len: 2048
 quantize_ctx_encoder: true
 
 # data (parquet files are loaded relative to data/raw_datasets/)
