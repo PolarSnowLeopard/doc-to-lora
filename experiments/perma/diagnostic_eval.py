@@ -130,7 +130,10 @@ def evaluate_task_naive_merge(
         text = session_to_text(session)
         model.reset()
         safe_internalize(model, text, tokenizer)
-        lora_copy = copy.deepcopy(model.generated_loras)
+        lora_copy = {
+            k: {m: v.detach().clone() for m, v in mats.items()}
+            for k, mats in model.generated_loras.items()
+        }
         all_loras.append(lora_copy)
 
     if len(all_loras) > 1:
