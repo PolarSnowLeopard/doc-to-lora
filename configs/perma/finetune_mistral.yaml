@@ -14,9 +14,11 @@ n_latent_queries: 8
 num_blocks: 9
 num_self_attn_per_block: 0
 
-gradient_accumulation_steps: 4
-max_packed_inp_len: 4096
-max_packed_ctx_len: 4096
+gradient_accumulation_steps: 8
+max_packed_inp_len: 1024
+max_packed_ctx_len: 2048
+quantize_ctx_encoder: true
+gradient_checkpointing: true
 
 # data (parquet files are loaded relative to data/raw_datasets/)
 train_ds_names:
