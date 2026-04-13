@@ -30,15 +30,18 @@ print("Test 2: PERMA MCQ (上下文在 prompt, 无 LoRA)")
 print("=" * 60)
 tasks = load_tasks(user_ids=[ALL_USER_IDS[0]], noise=False, multi_domain=False)
 task = tasks[0]
-ctx_full = session_to_text(task.sessions[-1])
-ctx_tokens = tok.encode(ctx_full, add_special_tokens=False)[:3000]
-ctx = tok.decode(ctx_tokens, skip_special_tokens=True)
 n = len(task.options)
 opts = "\n".join(f"{chr(65+i)}. {o}" for i, o in enumerate(task.options))
-content = f"Based on the conversation below, answer the question.\n\nConversation:\n{ctx}\n\nQuestion: {task.question}\n\nOptions:\n{opts}\n\nAnswer with the letter only (A-{chr(65+n-1)}):"
+prompt_part = f"Based on the conversation below, answer the question.\n\nConversation:\n{{CTX}}\n\nQuestion: {task.question}\n\nOptions:\n{opts}\n\nAnswer with the letter only (A-{chr(65+n-1)}):"
+prompt_tokens = len(tok.encode(prompt_part, add_special_tokens=False))
+max_ctx_tokens = 7500 - prompt_tokens
+ctx_full = session_to_text(task.sessions[-1])
+ctx_tokens = tok.encode(ctx_full, add_special_tokens=False)[:max(max_ctx_tokens, 500)]
+ctx = tok.decode(ctx_tokens, skip_special_tokens=True)
+content = prompt_part.replace("{CTX}", ctx)
 chat = [{"role": "user", "content": content}]
 ids = tok.apply_chat_template(chat, add_special_tokens=False, add_generation_prompt=True, return_tensors="pt").to(model.device)
-print(f"  input_len: {ids.shape[-1]}")
+print(f"  input_len: {ids.shape[-1]} (ctx_tokens: {len(ctx_tokens)}, prompt_tokens: {prompt_tokens})")
 with torch.inference_mode():
     out = model.generate(input_ids=ids, max_new_tokens=16, pad_token_id=tok.eos_token_id)
 new_tok = out[0][ids.shape[-1]:]
