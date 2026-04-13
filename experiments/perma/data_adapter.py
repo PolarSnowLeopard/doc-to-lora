@@ -4,6 +4,7 @@ PERMA 数据适配器：将 PERMA benchmark 的多 session 对话数据
 """
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -33,6 +34,21 @@ class PermaTask:
     options: list[str]
     gold_label: str
     preferences: list[str]
+
+
+def _parse_options(raw) -> list[str]:
+    """解析 PERMA 选项：原始格式为 'A: text\\nB: text\\n...' 的单个字符串"""
+    if isinstance(raw, list):
+        return raw
+    matches = list(re.finditer(r'(?:^|\n)([A-Z]):\s', raw))
+    if not matches:
+        return [raw]
+    options = []
+    for i, m in enumerate(matches):
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+        options.append(raw[start:end].strip())
+    return options
 
 
 def _session_to_text(conversation: list[dict]) -> str:
@@ -100,7 +116,7 @@ def load_tasks(
                 topic=ev.get("topic", []),
                 sessions=sessions,
                 question=meta.get("question", ""),
-                options=meta.get("options", []),
+                options=_parse_options(meta.get("options", [])),
                 gold_label=meta.get("gold_label", ""),
                 preferences=ev.get("preferences", []),
             ))
