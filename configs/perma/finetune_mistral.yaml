@@ -1,0 +1,25 @@
+# PERMA fine-tune: 从 Mistral-7B Doc-to-LoRA checkpoint 微调
+# 使用 CE loss (不需要预生成 logprobs)
+
+# LoRA (与原始 checkpoint 一致)
+lora_r: 8
+lora_dropout: 0.0
+target_modules:
+  - down_proj
+
+use_kl_loss: false
+
+ctx_encoder_type: per_layer_activations
+n_latent_queries: 8
+num_blocks: 9
+num_self_attn_per_block: 0
+
+gradient_accumulation_steps: 4
+max_packed_inp_len: 4096
+max_packed_ctx_len: 4096
+
+# data
+train_ds_names:
+  - experiments/perma/train_data/train.parquet
+
+val_ds_names: null
