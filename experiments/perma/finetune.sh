@@ -15,10 +15,9 @@ PERMA_DATA_ROOT=experiments/perma/data \
       --test_user 334 \
       --output_dir "$DATA_DIR"
 
-# Step 2: 微调
+# Step 2: 微调 (单卡)
 echo "=== Fine-tuning ==="
-uv run accelerate launch --config_file accelerate_config.yaml \
-  --num_processes=1 --gpu_ids=0 train.py \
+CUDA_VISIBLE_DEVICES=0 uv run python train.py \
   configs/perma/finetune_mistral.yaml \
   --from_pretrained_checkpoint=$CKPT \
   --model_name_or_path=mistralai/Mistral-7B-Instruct-v0.2 \
