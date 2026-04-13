@@ -170,10 +170,12 @@ def evaluate_task_no_lora(
     model.reset()
     prompt = build_mcq_prompt(task.question, task.options)
     last_session = session_to_text(task.sessions[-1])
-    # 在文本层面截断上下文，保留 chat template 完整性
-    last_session = truncate_text_to_tokens(last_session, tokenizer, 28000)
+    tmpl = f"Based on the following conversation, answer the question.\n\nConversation:\n{{CTX}}\n\n{prompt}"
+    tmpl_tokens = len(tokenizer.encode(tmpl, add_special_tokens=False))
+    max_ctx = max(7500 - tmpl_tokens, 500)
+    last_session = truncate_text_to_tokens(last_session, tokenizer, max_ctx)
 
-    content = f"Based on the following conversation, answer the question.\n\nConversation:\n{last_session}\n\n{prompt}"
+    content = tmpl.replace("{CTX}", last_session)
     chat = [{"role": "user", "content": content}]
     input_ids = tokenizer.apply_chat_template(
         chat, add_special_tokens=False,
