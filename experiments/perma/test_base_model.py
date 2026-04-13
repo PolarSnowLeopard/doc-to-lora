@@ -30,7 +30,9 @@ print("Test 2: PERMA MCQ (上下文在 prompt, 无 LoRA)")
 print("=" * 60)
 tasks = load_tasks(user_ids=[ALL_USER_IDS[0]], noise=False, multi_domain=False)
 task = tasks[0]
-ctx = session_to_text(task.sessions[-1])[:2000]
+ctx_full = session_to_text(task.sessions[-1])
+ctx_tokens = tok.encode(ctx_full, add_special_tokens=False)[:3000]
+ctx = tok.decode(ctx_tokens, skip_special_tokens=True)
 n = len(task.options)
 opts = "\n".join(f"{chr(65+i)}. {o}" for i, o in enumerate(task.options))
 content = f"Based on the conversation below, answer the question.\n\nConversation:\n{ctx}\n\nQuestion: {task.question}\n\nOptions:\n{opts}\n\nAnswer with the letter only (A-{chr(65+n-1)}):"
