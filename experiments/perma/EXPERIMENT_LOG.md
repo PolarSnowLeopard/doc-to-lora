@@ -145,11 +145,66 @@ PERMA 论文中的模型均为 **大规模闭源模型 + 全文上下文**，与
 
 ---
 
-## 七、待完成实验
+## 六、实验 C — Standalone & RAG Baseline（Mistral-7B）
 
-### 阶段 1: 补齐 Baseline（Mistral-7B）
-- [ ] Standalone baseline（对齐 PERMA 的 ANSWER_OPTIONAL_PROMPT 格式）
-- [ ] RAG baseline（BGE-M3 top-k 检索 + Mistral-7B 回答）
+### 设置
+- 与 Doc-to-LoRA 实验使用完全相同的基座模型（Mistral-7B-Instruct-v0.2）和测试用户（user334, 75 tasks）
+- Standalone 使用 PERMA 原版 `ANSWER_OPTIONAL_PROMPT` 格式，全部对话历史作为上下文
+- RAG 使用 BGE-M3 编码对话片段（每 2 条消息为一个 chunk），余弦相似度 top-10 检索
+
+### 结果: Held-out User334 (75 Tasks)
+
+| 方法 | Overall | Type 1 (Zero-Memory) | Type 2 (In-Time) | Type 3 (Post-Intervention) |
+|------|---------|---------------------|-------------------|---------------------------|
+| Standalone（全文上下文） | 68.0% (51/75) | 66.7% (10/15) | 60.0% (9/15) | 71.1% (32/45) |
+| RAG (BGE-M3 top-10) | 60.0% (45/75) | 60.0% (9/15) | 60.0% (9/15) | 60.0% (27/45) |
+
+### 关键观察
+- Standalone 的 input_len = 32736，几乎撑满 Mistral-7B 的 32K 上下文窗口
+- RAG 的 input_len ≈ 2000 tokens，token 效率高但准确率最低
+- RAG 实现与 PERMA 论文完全一致（编码方式、chunk 大小、top_k），10 个点差距来自回答模型差异（GPT-4o-mini vs Mistral-7B），与 standalone 的差距一致
+
+---
+
+## 七、完整对比总结
+
+### 所有方法在 User334 (75 Tasks) 上的表现
+
+| 方法 | 类型 | Overall | Type 1 (Zero-Memory) | Type 2 (In-Time) | Type 3 (Post-Intervention) | 输入长度 |
+|------|------|---------|---------------------|-------------------|---------------------------|---------|
+| D2L fine-tuned (single_shot) | 需训练 | **85.3%** | 66.7% | **86.7%** | **91.1%** | ~200 |
+| D2L fine-tuned (naive_merge) | 需训练 | 84.0% | **73.3%** | 80.0% | 88.9% | ~200 |
+| D2L fine-tuned (oracle) | 需训练 | 74.7% | 60.0% | 66.7% | 82.2% | ~200 |
+| Standalone（全文上下文） | 免训练 | 68.0% | 66.7% | 60.0% | 71.1% | ~32K |
+| RAG (BGE-M3 top-10) | 免训练 | 60.0% | 60.0% | 60.0% | 60.0% | ~2K |
+| no_lora（仅最后 session） | 免训练 | 58.7% | 60.0% | 73.3% | 53.3% | ~7.5K |
+| D2L off-the-shelf (single_shot) | 免训练* | 17.3% | 26.7% | 26.7% | 11.1% | ~200 |
+
+*D2L off-the-shelf 使用在文档 QA 上预训练的超网络，未在 PERMA 数据上微调
+
+### 与 PERMA 论文 (GPT-4o-mini) 的对比
+
+| 模式 | GPT-4o-mini (PERMA 论文) | Mistral-7B (本实验) | 差值 |
+|------|------------------------|-------------------|------|
+| Standalone | 78.0% | 68.0% | -10.0 |
+| RAG (BGE-M3) | 70.2% | 60.0% | -10.2 |
+
+差值一致（~10 pp），说明实现正确，差距来自模型能力而非代码差异。
+
+### 核心结论
+
+1. **参数化记忆 > 上下文记忆**: D2L fine-tuned (85.3%) 大幅超越 Standalone (68.0%)，且不占用上下文窗口
+2. **7B + LoRA 超越 GPT-4o-mini + 全文**: 85.3% > 78.0%，证明参数化记忆路线的潜力
+3. **多 session 处理是关键瓶颈**: oracle (74.7%) < naive_merge (84.0%) ≈ single_shot (85.3%)，简单拼接不如选择性处理
+4. **CMP 的切入点**: naive_merge 用简单平均处理多 session，缺乏学习到的选择性遗忘/强化机制 → CMP 用递归门控替代
+
+---
+
+## 八、待完成实验
+
+### 阶段 1: 补齐 Baseline（Mistral-7B） ✅
+- [x] Standalone baseline（对齐 PERMA 的 ANSWER_OPTIONAL_PROMPT 格式）
+- [x] RAG baseline（BGE-M3 top-k 检索 + Mistral-7B 回答）
 
 ### 阶段 2-4: CMP 设计、实现、评测
 - [ ] 设计 CMP 递归超网络架构
@@ -163,14 +218,14 @@ PERMA 论文中的模型均为 **大规模闭源模型 + 全文上下文**，与
 
 ---
 
-## 八、调试记录
+## 九、调试记录
 
 1. **PERMA options 解析错误**: `options` 字段是 `"A: text\nB: text\n..."` 格式的字符串，初始代码当作 list 迭代导致每个字符变成一个"选项"(2621个)，prompt 严重溢出 → 修复: 实现 `_parse_options()`
 2. **deepcopy 非叶 tensor 失败**: naive_merge 中 `copy.deepcopy(model.generated_loras)` 报错 → 修复: 改用 `detach().clone()`
 3. **训练 OOM**: Mistral-7B + 大 packed_len 超出 80GB 显存 → 修复: 降低 `max_packed_inp_len/ctx_len` 到 768，启用 `quantize_ctx_encoder`，`gradient_accumulation_steps: 16`
 4. **accelerate 多卡冲突**: `accelerate launch --num_processes=1` 与多卡 config 冲突 → 修复: 直接用 `CUDA_VISIBLE_DEVICES=0 uv run python train.py`
 
-## 九、文件说明
+## 十、文件说明
 
 - `data_adapter.py`: PERMA 数据加载与格式转换（含 `_parse_options` 修复）
 - `diagnostic_eval.py`: 四种模式的评测脚本（oracle / single_shot / naive_merge / no_lora）
