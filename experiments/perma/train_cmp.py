@@ -56,8 +56,8 @@ def load_cached_tasks(emb_dir: str, user_ids: list[int] | None = None):
             continue
 
         user_path = os.path.join(emb_dir, user_dir)
-        for task_id in sorted(os.listdir(user_path)):
-            task_dir = os.path.join(user_path, task_id)
+        for task_dir_name in sorted(os.listdir(user_path)):
+            task_dir = os.path.join(user_path, task_dir_name)
             meta_path = os.path.join(task_dir, "meta.pt")
             if not os.path.exists(meta_path):
                 continue
@@ -73,7 +73,7 @@ def load_cached_tasks(emb_dir: str, user_ids: list[int] | None = None):
 
             tasks.append({
                 "user_id": uid,
-                "task_id": task_id,
+                "task_id": meta["task_id"],
                 "task_type": meta["task_type"],
                 "question": meta["question"],
                 "options": meta["options"],
