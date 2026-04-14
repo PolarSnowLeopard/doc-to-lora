@@ -372,6 +372,37 @@ def evaluate_task_rag(
     }
 
 
+def evaluate_task_cmp(
+    model, tokenizer, task: PermaTask,
+    gate=None,
+) -> dict:
+    """CMP: 逐 session 过 Encoder+Aggregator → Gate 合并 → Head → LoRA → 回答"""
+    from cmp import CMPGate, extract_aggregator_output, lora_emb_to_lora_dict, run_cmp_sessions
+
+    session_embs = []
+    for session in task.sessions:
+        text = session_to_text(session)
+        emb = extract_aggregator_output(model, text, max_tokens=MAX_CTX_TOKENS)
+        session_embs.append(emb)
+
+    h = run_cmp_sessions(gate, session_embs)
+    lora_dict = lora_emb_to_lora_dict(model.hypernet, h)
+
+    model.reset()
+    model.generated_loras = lora_dict
+    model.patch_lora_forward()
+    pred = ask_mcq(model, tokenizer, task)
+
+    return {
+        "task_id": task.task_id,
+        "task_type": task.task_type,
+        "pred": pred,
+        "gold": task.gold_label,
+        "correct": pred == task.gold_label,
+        "num_sessions": len(task.sessions),
+    }
+
+
 def run_diagnostic(args):
     print(f"Loading model from {args.checkpoint} ...")
     state_dict = torch.load(args.checkpoint, weights_only=False)
@@ -380,6 +411,20 @@ def run_diagnostic(args):
     )
     model.reset()
     tokenizer = get_tokenizer(model.base_model.name_or_path)
+
+    # 如果是 CMP 模式，加载 gate checkpoint
+    cmp_gate = None
+    if args.mode == "cmp" and args.cmp_checkpoint:
+        from cmp import CMPGate
+        ckpt = torch.load(args.cmp_checkpoint, weights_only=False, map_location=model.device)
+        cmp_gate = CMPGate(
+            d_latent=ckpt.get("d_latent", 512),
+            init_bias=ckpt.get("init_bias", -2.0),
+        ).to(model.device)
+        cmp_gate.load_state_dict(ckpt["gate_state_dict"])
+        cmp_gate.eval()
+        print(f"Loaded CMP gate from {args.cmp_checkpoint} "
+              f"(epoch={ckpt.get('epoch')}, val_acc={ckpt.get('val_acc', '?')})")
 
     user_ids = ALL_USER_IDS[:args.max_users] if args.max_users > 0 else None
     tasks = load_tasks(user_ids=user_ids, noise=False, multi_domain=False)
@@ -400,6 +445,9 @@ def run_diagnostic(args):
         "rag": lambda model, tokenizer, task: evaluate_task_rag(
             model, tokenizer, task,
             top_k=args.rag_top_k, batch_size=args.rag_batch_size,
+        ),
+        "cmp": lambda model, tokenizer, task: evaluate_task_cmp(
+            model, tokenizer, task, gate=cmp_gate,
         ),
     }
 
@@ -465,7 +513,9 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--mode", type=str, default="all",
                         choices=["all", "oracle", "single_shot", "naive_merge",
-                                 "no_lora", "standalone", "rag"])
+                                 "no_lora", "standalone", "rag", "cmp"])
+    parser.add_argument("--cmp_checkpoint", type=str, default=None,
+                        help="CMP gate checkpoint (.pt) for --mode cmp")
     parser.add_argument("--rag_top_k", type=int, default=10)
     parser.add_argument("--rag_batch_size", type=int, default=2)
     parser.add_argument("--max_users", type=int, default=2,
