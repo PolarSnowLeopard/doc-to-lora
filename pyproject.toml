@@ -39,6 +39,7 @@ dependencies = [
     "google-cloud-storage>=3.2.0",
     "wonderwords>=2.2.0",
     "llmlingua>=0.2.2",
+    "sentence-transformers>=3.0.0",
 ]
 
 [build-system]

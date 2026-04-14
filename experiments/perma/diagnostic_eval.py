@@ -1,18 +1,22 @@
 """
-诊断实验：在 PERMA 上对比 Doc-to-LoRA 的三种使用方式，
-验证"历史记忆是否重要"以及"naive merge 是否有效"。
+PERMA 评测脚本：对比多种记忆方法在 PERMA benchmark 上的表现。
 
-三组对比：
-  (a) Oracle:      拼全部 session → internalize（上界）
-  (b) Single-shot: 只用最新 session → internalize（下界）
-  (c) Naive merge: 每个 session 独立 internalize → LoRA 参数平均
+评测模式：
+  Doc-to-LoRA 系列:
+    oracle       — 全部 session 拼接 → internalize → LoRA
+    single_shot  — 只用最新 session → internalize → LoRA
+    naive_merge  — 每个 session 独立 internalize → LoRA 参数平均
+  基线方法:
+    standalone   — 全部对话拼进 prompt（PERMA 原版格式），基座模型直接回答
+    rag          — BGE-M3 检索 top-k 对话片段作为上下文，基座模型回答
+    no_lora      — 仅最后 session 拼进 prompt（简化 standalone）
 
 使用方式：
   PERMA_DATA_ROOT=/path/to/perma/data \
   python experiments/perma/diagnostic_eval.py \
-    --checkpoint trained_d2l/gemma_demo/checkpoint-80000/pytorch_model.bin \
-    --mode all \
-    --max_users 2
+    --checkpoint trained_d2l/mistral_7b_d2l/checkpoint-20000/pytorch_model.bin \
+    --mode standalone \
+    --max_users 1
 """
 import argparse
 import copy
@@ -22,6 +26,7 @@ import re
 import sys
 import traceback
 
+import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
@@ -37,6 +42,27 @@ from data_adapter import (
 )
 
 MAX_CTX_TOKENS = 4000
+
+# --------------- PERMA 原版 MCQ Prompt ---------------
+PERMA_ANSWER_PROMPT = """You are an assistant specialized in answering multiple-choice questions.
+
+## Your Memory
+{context}
+
+## User Task Query
+{question}
+
+## Options:
+{options}
+
+Your goal is to choose **the most appropriate answer option for the User Task Query** from the Options based on your memory. The output should be **ONLY the option key** without any additional explanation, e.g. `A`, etc.
+
+Your response:
+"""
+
+
+def format_options_text(options: list[str]) -> str:
+    return "\n".join(f"{chr(65 + i)}: {opt}" for i, opt in enumerate(options))
 
 
 def build_mcq_prompt(question: str, options: list[str]) -> str:
@@ -206,6 +232,146 @@ def evaluate_task_no_lora(
     }
 
 
+# --------------- Standalone baseline ---------------
+
+def flatten_all_messages(task: PermaTask) -> str:
+    """将所有 session 的原始对话拼为 PERMA standalone 格式的上下文"""
+    lines = []
+    for conv in task.raw_conversations:
+        for msg in conv:
+            lines.append(f"{msg['role']}: {msg['content']}")
+    return "\n".join(lines)
+
+
+def evaluate_task_standalone(
+    model, tokenizer, task: PermaTask,
+) -> dict:
+    """Standalone: 全部对话放进 prompt，基座模型直接回答（PERMA 原版格式）"""
+    model.reset()
+    context = flatten_all_messages(task)
+    options_text = format_options_text(task.options)
+
+    prompt_text = PERMA_ANSWER_PROMPT.format(
+        context=context,
+        question=task.question,
+        options=options_text,
+    )
+    chat = [{"role": "user", "content": prompt_text}]
+    input_ids = tokenizer.apply_chat_template(
+        chat, add_special_tokens=False,
+        add_generation_prompt=True, return_tensors="pt",
+    ).to(model.device)
+
+    # 截断到模型最大长度（保留尾部，即问题+选项部分）
+    max_len = getattr(tokenizer, "model_max_length", 32768)
+    if max_len > 100000:
+        max_len = 32768
+    if input_ids.shape[-1] > max_len - 32:
+        input_ids = input_ids[:, -(max_len - 32):]
+
+    print(f"    [DEBUG standalone] input_len={input_ids.shape[-1]}")
+
+    with torch.inference_mode():
+        out = model.base_model.generate(
+            input_ids=input_ids, max_new_tokens=16,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    new_tokens = out[0][input_ids.shape[-1]:]
+    generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    raw_text = tokenizer.decode(new_tokens, skip_special_tokens=False)
+    print(f"    [DEBUG standalone] raw='{raw_text}' clean='{generated_text}'")
+    pred = extract_answer(generated_text, len(task.options))
+
+    return {
+        "task_id": task.task_id,
+        "task_type": task.task_type,
+        "pred": pred,
+        "gold": task.gold_label,
+        "correct": pred == task.gold_label,
+    }
+
+
+# --------------- RAG baseline ---------------
+
+_rag_model = None
+
+
+def get_rag_model():
+    global _rag_model
+    if _rag_model is None:
+        from sentence_transformers import SentenceTransformer
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _rag_model = SentenceTransformer("BAAI/bge-m3", device=device)
+    return _rag_model
+
+
+def evaluate_task_rag(
+    model, tokenizer, task: PermaTask,
+    top_k: int = 10, batch_size: int = 2,
+) -> dict:
+    """RAG: BGE-M3 编码对话片段 → top-k 检索 → 基座模型回答"""
+    model.reset()
+    emb_model = get_rag_model()
+
+    all_messages = []
+    for conv in task.raw_conversations:
+        all_messages.extend(conv)
+
+    chunks = []
+    for i in range(0, len(all_messages), batch_size):
+        batch = all_messages[i:i + batch_size]
+        chunk_text = "\n".join(f"{m['role']}: {m['content']}" for m in batch)
+        chunks.append(chunk_text)
+
+    if not chunks:
+        context = ""
+    else:
+        chunk_embeddings = emb_model.encode(chunks, normalize_embeddings=True)
+        q_vec = emb_model.encode([task.question], normalize_embeddings=True)[0]
+        sims = np.dot(chunk_embeddings, q_vec)
+        top_indices = np.argsort(sims)[::-1][:top_k]
+        context = "\n\n".join(chunks[i] for i in sorted(top_indices))
+
+    options_text = format_options_text(task.options)
+    prompt_text = PERMA_ANSWER_PROMPT.format(
+        context=context,
+        question=task.question,
+        options=options_text,
+    )
+    chat = [{"role": "user", "content": prompt_text}]
+    input_ids = tokenizer.apply_chat_template(
+        chat, add_special_tokens=False,
+        add_generation_prompt=True, return_tensors="pt",
+    ).to(model.device)
+
+    max_len = getattr(tokenizer, "model_max_length", 32768)
+    if max_len > 100000:
+        max_len = 32768
+    if input_ids.shape[-1] > max_len - 32:
+        input_ids = input_ids[:, -(max_len - 32):]
+
+    print(f"    [DEBUG rag] input_len={input_ids.shape[-1]} chunks={len(chunks)} top_k={min(top_k, len(chunks))}")
+
+    with torch.inference_mode():
+        out = model.base_model.generate(
+            input_ids=input_ids, max_new_tokens=16,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    new_tokens = out[0][input_ids.shape[-1]:]
+    generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    raw_text = tokenizer.decode(new_tokens, skip_special_tokens=False)
+    print(f"    [DEBUG rag] raw='{raw_text}' clean='{generated_text}'")
+    pred = extract_answer(generated_text, len(task.options))
+
+    return {
+        "task_id": task.task_id,
+        "task_type": task.task_type,
+        "pred": pred,
+        "gold": task.gold_label,
+        "correct": pred == task.gold_label,
+    }
+
+
 def run_diagnostic(args):
     print(f"Loading model from {args.checkpoint} ...")
     state_dict = torch.load(args.checkpoint, weights_only=False)
@@ -230,6 +396,11 @@ def run_diagnostic(args):
         "single_shot": evaluate_task_single_shot,
         "naive_merge": evaluate_task_naive_merge,
         "no_lora": evaluate_task_no_lora,
+        "standalone": evaluate_task_standalone,
+        "rag": lambda model, tokenizer, task: evaluate_task_rag(
+            model, tokenizer, task,
+            top_k=args.rag_top_k, batch_size=args.rag_batch_size,
+        ),
     }
 
     type_names = {1: "Zero-Memory", 2: "In-Time", 3: "Post-Intervention"}
@@ -293,7 +464,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--mode", type=str, default="all",
-                        choices=["all", "oracle", "single_shot", "naive_merge", "no_lora"])
+                        choices=["all", "oracle", "single_shot", "naive_merge",
+                                 "no_lora", "standalone", "rag"])
+    parser.add_argument("--rag_top_k", type=int, default=10)
+    parser.add_argument("--rag_batch_size", type=int, default=2)
     parser.add_argument("--max_users", type=int, default=2,
                         help="Max users to evaluate (0 = all)")
     parser.add_argument("--output_dir", type=str,

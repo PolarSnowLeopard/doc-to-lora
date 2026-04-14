@@ -30,6 +30,7 @@ class PermaTask:
     task_type: int            # 1=Zero-Memory, 2=In-Time, 3=Post-Intervention
     topic: list[str]
     sessions: list[dict]      # [{"text": str, "date": str}, ...]
+    raw_conversations: list   # [[{role, content}, ...], ...] per session
     question: str
     options: list[str]
     gold_label: str
@@ -57,9 +58,10 @@ def _session_to_text(conversation: list[dict]) -> str:
     )
 
 
-def _flatten_sessions(context_list: list) -> list[dict]:
-    """将 PERMA 的 context 格式转为 [{text, date}, ...]"""
+def _flatten_sessions(context_list: list) -> tuple[list[dict], list]:
+    """将 PERMA 的 context 格式转为 [{text, date}, ...] 和原始对话列表"""
     sessions = []
+    raw_conversations = []
     for entry in context_list:
         conv = entry[0]  # list of {role, content}
         date = entry[1] if len(entry) > 1 else ""
@@ -67,7 +69,8 @@ def _flatten_sessions(context_list: list) -> list[dict]:
             "text": _session_to_text(conv),
             "date": str(date),
         })
-    return sessions
+        raw_conversations.append(conv)
+    return sessions, raw_conversations
 
 
 def load_tasks(
@@ -101,7 +104,7 @@ def load_tasks(
             task_id = ev.get("task_id", "")
             task_type = int(ev.get("type", 0))
             context = ev.get("context", [])
-            sessions = _flatten_sessions(context)
+            sessions, raw_conversations = _flatten_sessions(context)
 
             meta_path = os.path.join(meta_dir, f"{task_id}_{task_type}.json")
             if not os.path.exists(meta_path):
@@ -115,6 +118,7 @@ def load_tasks(
                 task_type=task_type,
                 topic=ev.get("topic", []),
                 sessions=sessions,
+                raw_conversations=raw_conversations,
                 question=meta.get("question", ""),
                 options=_parse_options(meta.get("options", [])),
                 gold_label=meta.get("gold_label", ""),
