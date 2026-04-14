@@ -8,8 +8,6 @@
   - session_0.pt, session_1.pt, ...
   - meta.pt  (task_type, question, options, gold_label 等)
 
-同一 task_id 不同 type 共享 session embedding（自动复用已计算结果）。
-
 用法:
   PERMA_DATA_ROOT=experiments/perma/data \
   python experiments/perma/precompute_embs.py \
@@ -19,7 +17,6 @@
 """
 import argparse
 import os
-import shutil
 import sys
 
 import torch
@@ -46,74 +43,50 @@ def precompute(args):
     print(f"Loaded {len(tasks)} tasks from {len(set(t.user_id for t in tasks))} users")
 
     os.makedirs(args.output_dir, exist_ok=True)
-    computed = 0
-    reused = 0
-
-    # (user_id, task_id) → 已经保存 session 文件的目录路径
-    session_cache = {}
+    saved = 0
 
     for i, task in enumerate(tasks):
         task_key = f"{task.task_id}_type{task.task_type}"
         task_dir = os.path.join(args.output_dir, f"user{task.user_id}", task_key)
         os.makedirs(task_dir, exist_ok=True)
 
-        cache_key = (task.user_id, task.task_id)
-        source_dir = session_cache.get(cache_key)
-
-        n_sessions = len(task.sessions)
         emb_shape = None
-
-        if source_dir is not None:
-            # 复用已计算的 session embedding
-            for s_idx in range(n_sessions):
-                src = os.path.join(source_dir, f"session_{s_idx}.pt")
-                dst = os.path.join(task_dir, f"session_{s_idx}.pt")
-                if not os.path.exists(dst):
-                    shutil.copy2(src, dst)
-            emb_shape = torch.load(
-                os.path.join(source_dir, "session_0.pt"),
-                weights_only=True, map_location="cpu",
-            ).shape
-            reused += n_sessions
-        else:
-            for s_idx, session in enumerate(task.sessions):
-                cache_path = os.path.join(task_dir, f"session_{s_idx}.pt")
-                if os.path.exists(cache_path) and not args.overwrite:
-                    if emb_shape is None:
-                        emb_shape = torch.load(
-                            cache_path, weights_only=True, map_location="cpu",
-                        ).shape
-                    continue
-
-                text = session_to_text(session)
-                tokens = ctx_tokenizer.encode(text, add_special_tokens=False)
-                if len(tokens) > args.max_ctx_tokens:
-                    tokens = tokens[:args.max_ctx_tokens]
-
-                ctx_ids = torch.tensor([tokens], device=model.device)
-                ctx_attn_mask = torch.ones_like(ctx_ids)
-
-                with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    ctx_features = model.ctx_encoder(
-                        input_ids=ctx_ids, attention_mask=ctx_attn_mask,
-                    )
-                    lora_emb, _ = model.hypernet.aggregator(
-                        ctx_features, ctx_attn_mask, None,
-                    )
-
-                emb_cpu = lora_emb.cpu()
-                torch.save(emb_cpu, cache_path)
+        for s_idx, session in enumerate(task.sessions):
+            cache_path = os.path.join(task_dir, f"session_{s_idx}.pt")
+            if os.path.exists(cache_path) and not args.overwrite:
                 if emb_shape is None:
-                    emb_shape = emb_cpu.shape
-                computed += 1
+                    emb_shape = torch.load(
+                        cache_path, weights_only=True, map_location="cpu",
+                    ).shape
+                continue
 
-            session_cache[cache_key] = task_dir
+            text = session_to_text(session)
+            tokens = ctx_tokenizer.encode(text, add_special_tokens=False)
+            if len(tokens) > args.max_ctx_tokens:
+                tokens = tokens[:args.max_ctx_tokens]
+
+            ctx_ids = torch.tensor([tokens], device=model.device)
+            ctx_attn_mask = torch.ones_like(ctx_ids)
+
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                ctx_features = model.ctx_encoder(
+                    input_ids=ctx_ids, attention_mask=ctx_attn_mask,
+                )
+                lora_emb, _ = model.hypernet.aggregator(
+                    ctx_features, ctx_attn_mask, None,
+                )
+
+            emb_cpu = lora_emb.cpu()
+            torch.save(emb_cpu, cache_path)
+            if emb_shape is None:
+                emb_shape = emb_cpu.shape
+            saved += 1
 
         meta = {
             "user_id": task.user_id,
             "task_id": task.task_id,
             "task_type": task.task_type,
-            "n_sessions": n_sessions,
+            "n_sessions": len(task.sessions),
             "question": task.question,
             "options": task.options,
             "gold_label": task.gold_label,
@@ -123,10 +96,9 @@ def precompute(args):
 
         if (i + 1) % 50 == 0 or i == len(tasks) - 1:
             print(f"  [{i+1}/{len(tasks)}] user{task.user_id}/{task_key}: "
-                  f"{n_sessions} sessions, shape={emb_shape}")
+                  f"{len(task.sessions)} sessions, shape={emb_shape}")
 
-    print(f"\nDone. Computed {computed} embeddings, reused {reused} from cache.")
-    print(f"Saved to {args.output_dir}")
+    print(f"\nDone. Saved {saved} new embeddings to {args.output_dir}")
 
 
 if __name__ == "__main__":
