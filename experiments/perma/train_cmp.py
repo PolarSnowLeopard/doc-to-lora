@@ -259,11 +259,6 @@ def train(args):
             torch.cuda.empty_cache()
 
             epoch_loss += loss.item()
-            with torch.no_grad():
-                pred_tid = model.base_model(
-                    input_ids=prompt_ids.to(model.device)
-                ).logits[:, -1, :].argmax(-1).item()
-            # 简化：用 loss 跟踪，pred 在 validation 时全量评估
             global_step += 1
 
         epoch_loss /= len(train_tasks)
