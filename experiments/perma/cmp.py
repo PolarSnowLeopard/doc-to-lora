@@ -50,12 +50,10 @@ def extract_aggregator_output(model, text: str, max_tokens: int = 4000):
     ctx_ids = torch.tensor([tokens], device=model.device)
     ctx_attn_mask = torch.ones_like(ctx_ids)
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         ctx_features = model.ctx_encoder(
             input_ids=ctx_ids, attention_mask=ctx_attn_mask
         )
-
-    with torch.no_grad():
         lora_emb, _ = model.hypernet.aggregator(ctx_features, ctx_attn_mask, None)
 
     return lora_emb  # [1, 32, 1, 8, 512]
@@ -67,10 +65,11 @@ def lora_emb_to_lora_dict(hypernet, lora_emb):
     lora_emb: [bs, n_layers, n_modules, r, d_latent]
     returns: lora_dict  {module_name: {"A": tensor, "B": tensor}}
     """
-    h = hypernet.layers(lora_emb)
-    norm = torch.norm(h, dim=-1, keepdim=True)
-    h = h / norm
-    flat_loras = hypernet.head(h)
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        h = hypernet.layers(lora_emb)
+        norm = torch.norm(h, dim=-1, keepdim=True)
+        h = h / norm
+        flat_loras = hypernet.head(h)
     return hypernet._to_lora_dict(flat_loras)
 
 

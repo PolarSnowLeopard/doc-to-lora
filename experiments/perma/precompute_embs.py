@@ -61,7 +61,7 @@ def precompute(args):
             ctx_ids = torch.tensor([tokens], device=model.device)
             ctx_attn_mask = torch.ones_like(ctx_ids)
 
-            with torch.no_grad():
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 ctx_features = model.ctx_encoder(
                     input_ids=ctx_ids, attention_mask=ctx_attn_mask,
                 )

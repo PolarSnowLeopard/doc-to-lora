@@ -182,11 +182,11 @@ def gate_forward(gate, hypernet, embs, device):
     for emb in embs:
         h = gate(h, emb.to(device))
 
-    # 冻结的 ResMLPBlock + L2Norm + EinMix Head
-    h = hypernet.layers(h)
-    norm = torch.norm(h, dim=-1, keepdim=True)
-    h = h / norm
-    flat_loras = hypernet.head(h)
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        h = hypernet.layers(h)
+        norm = torch.norm(h, dim=-1, keepdim=True)
+        h = h / norm
+        flat_loras = hypernet.head(h)
     return hypernet._to_lora_dict(flat_loras)
 
 
