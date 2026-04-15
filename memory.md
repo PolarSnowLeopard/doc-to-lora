@@ -72,6 +72,7 @@ Agent 在多轮交互中需要维护长期记忆。当前工业界产品（Curso
 
 | Benchmark | 时间 | 评测重点 |
 |-----------|------|---------|
+| **MSC** | ACL 2022 | 多 session 开放域对话的长期记忆保持，GenerativeAdapter (ICLR 2025) 的评测基准 |
 | **PERMA** | arXiv 2603.23231, 2026.03 | 跨 session 偏好演化、偏好一致性、跨领域记忆保持 |
 | **MemoryArena** | arXiv 2602.16313, 2025.02 | 多 session agent 任务中的记忆获取和使用（766 tasks） |
 | **MemoryCD** | 2026.03 | 真实用户跨年跨领域行为（Amazon Review 数据） |
@@ -281,14 +282,21 @@ for sequence in dataset:
 - **评测协议**：多选题任务 + LLM-based 用户模拟器交互评测
 - **选择理由**：专门评估偏好随时间变化，正好对应增量更新长期记忆的核心卖点
 
-### 5.2 辅助 Benchmark：MemoryArena
+### 5.2 辅助 Benchmark：MSC (Multi-Session Chat)
+
+- **论文**：*Beyond Goldfish Memory: Long-Term Open-Domain Conversation*，Xu et al., ACL 2022
+- **数据**：ParlAI / HuggingFace 可获取
+- **评测内容**：多 session 开放域对话中的长期记忆保持与个性化一致性
+- **选择理由**：GenerativeAdapter (ICLR 2025) 在 MSC 上有现成数字，可直接对标这一发表在顶会的 baseline，无需复现其方法；ACL 2022 发表，审稿人认可度高
+
+### 5.3 辅助 Benchmark：MemoryArena
 
 - **数据**：HuggingFace Datasets（五个任务 split）
 - **评测内容**：多 session agent 任务中的记忆获取和使用
 - **选择理由**：比 PERMA 更侧重 action-level 记忆应用，验证跨任务类型通用性
 - **注意**：代码仓库未完全公开，可能需自行编写评估脚本
 
-### 5.3 自构造 Stress Test
+### 5.4 自构造 Stress Test
 
 - **目的**：测试极端场景（现有 benchmark 可能 session 数不够极端）
 - **设计**：30+ session 长序列，包含偏好冲突 / 覆盖 / 遗忘场景
@@ -393,3 +401,4 @@ Title: "Stateful HyperLoRA: Session-Level Recurrent Memory Parametrization
 | [8] | ParamMem: Augmenting Language Agents with Parametric Reflective Memory | arXiv:2602.23320 | 参数化记忆相关工作 |
 | [9] | Active Context Compression: Autonomous Memory Management in LLM Agents | arXiv:2601.07190 | Agent 记忆压缩相关工作 |
 | [10] | On Catastrophic Forgetting in Low-Rank Decomposition-Based PEFT | arXiv:2603.09684 | LoRA 遗忘问题理论依据 |
+| [11] | Beyond Goldfish Memory: Long-Term Open-Domain Conversation | ACL 2022 | MSC benchmark，经典多 session 对话评测 |
