@@ -372,5 +372,4 @@ if __name__ == "__main__":
     parser.add_argument("--wd", type=float, default=0.01)
     parser.add_argument("--init_bias", type=float, default=-2.0)
     parser.add_argument("--max_target_tokens", type=int, default=512)
-    parser.parse_args()
     train(parser.parse_args())
