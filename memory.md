@@ -74,8 +74,9 @@ Agent 在多轮交互中需要维护长期记忆。当前工业界产品（Curso
 |-----------|------|---------|
 | **MSC** | ACL 2022 | 多 session 开放域对话的长期记忆保持，GenerativeAdapter (ICLR 2025) 的评测基准 |
 | **PERMA** | arXiv 2603.23231, 2026.03 | 跨 session 偏好演化、偏好一致性、跨领域记忆保持 |
+| **LoCoMo** | ACL 2024 | 超长对话（300+ 轮、19-35 sessions）的 5 类 QA 推理 + 事件图摘要 |
 | **MemoryArena** | arXiv 2602.16313, 2025.02 | 多 session agent 任务中的记忆获取和使用（766 tasks） |
-| **MemoryCD** | 2026.03 | 真实用户跨年跨领域行为（Amazon Review 数据） |
+| **MemoryCD** | ICLR 2026 WS | 真实用户跨年跨领域行为（Amazon Review 数据），数据暂未发布 |
 
 ---
 
@@ -289,14 +290,30 @@ for sequence in dataset:
 - **评测内容**：多 session 开放域对话中的长期记忆保持与个性化一致性
 - **选择理由**：GenerativeAdapter (ICLR 2025) 在 MSC 上有现成数字，可直接对标这一发表在顶会的 baseline，无需复现其方法；ACL 2022 发表，审稿人认可度高
 
-### 5.3 辅助 Benchmark：MemoryArena
+### 5.3 辅助 Benchmark：LoCoMo
+
+- **论文**：*Evaluating Very Long-Term Conversational Memory of LLM Agents*，Snap Research，ACL 2024
+- **代码**：`github.com/snap-research/locomo`，数据公开（10 个超长对话）
+- **评测内容**：超长多 session 对话（300+ 轮、9K-26K tokens、19-35 sessions）中的记忆推理，包含 5 种 QA 类型（single-hop / multi-hop / temporal / commonsense / adversarial）+ 事件图摘要
+- **评测协议**：QA 准确率（与 PERMA 类似，pipeline 易适配）
+- **选择理由**：ACL 2024 正会发表，审稿人认可度最高；session 数量远超 MSC/PERMA（19-35 sessions vs 4-5 sessions），最适合展示 CMP 在超长历史序列上的优势；QA 任务与我们现有 MCQ pipeline 天然对齐
+- **注意**：仅 10 个对话，统计显著性有限；包含多模态（图片），我们只评测文本部分
+
+### 5.4 备选 Benchmark：MemoryArena
 
 - **数据**：HuggingFace Datasets（五个任务 split）
 - **评测内容**：多 session agent 任务中的记忆获取和使用
 - **选择理由**：比 PERMA 更侧重 action-level 记忆应用，验证跨任务类型通用性
-- **注意**：代码仓库未完全公开，可能需自行编写评估脚本
+- **注意**：代码仓库未完全公开，适配难度较高，优先级排在 LoCoMo 之后
 
-### 5.4 自构造 Stress Test
+### 5.5 备选 Benchmark：MemoryCD
+
+- **论文**：*MemoryCD: Benchmarking Long-Context User Memory of LLM Agents for Lifelong Cross-Domain Personalization*，ICLR 2026 Lifelong Agents Workshop
+- **代码**：`github.com/AgentMemoryWorld/MemoryCD`（仓库暂为空，等待数据发布）
+- **评测内容**：真实用户跨年跨领域行为（Amazon Review 数据），12 个领域，4 种个性化任务
+- **当前状态**：数据和代码未发布，暂时无法使用
+
+### 5.6 自构造 Stress Test
 
 - **目的**：测试极端场景（现有 benchmark 可能 session 数不够极端）
 - **设计**：30+ session 长序列，包含偏好冲突 / 覆盖 / 遗忘场景
@@ -328,7 +345,8 @@ for sequence in dataset:
 
 阶段 3: 全量实验（~3-4 周）
 ├── PERMA 上跑全部 9 组对比 (a)-(i)
-├── MemoryArena 上跑核心对比
+├── MSC 上跑 per-session PPL 对比
+├── LoCoMo 上跑 5 类 QA 对比
 ├── Stress test 上跑 scaling 分析（记忆量 vs 性能 vs 计算量）
 ├── 消融实验（gate 组件的贡献）
 ├── 可视化：LoRA 参数空间演化轨迹 / gate 激活模式
@@ -372,7 +390,7 @@ Title: "Stateful HyperLoRA: Session-Level Recurrent Memory Parametrization
    - 训练策略：冻结超网络 + 只训 gate
 
 5. Experiments
-   - PERMA / MemoryArena 上的全量对比 (9 组)
+   - PERMA / MSC / LoCoMo 上的全量对比
    - Stress test: 长序列 scaling 分析
    - 消融实验: gate 组件贡献
    - 计算效率对比: 增量更新 vs 全量重编译
@@ -402,3 +420,4 @@ Title: "Stateful HyperLoRA: Session-Level Recurrent Memory Parametrization
 | [9] | Active Context Compression: Autonomous Memory Management in LLM Agents | arXiv:2601.07190 | Agent 记忆压缩相关工作 |
 | [10] | On Catastrophic Forgetting in Low-Rank Decomposition-Based PEFT | arXiv:2603.09684 | LoRA 遗忘问题理论依据 |
 | [11] | Beyond Goldfish Memory: Long-Term Open-Domain Conversation | ACL 2022 | MSC benchmark，经典多 session 对话评测 |
+| [12] | Evaluating Very Long-Term Conversational Memory of LLM Agents | ACL 2024 | LoCoMo benchmark，超长对话记忆推理评测 |
