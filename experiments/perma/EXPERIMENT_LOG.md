@@ -300,31 +300,101 @@ PERMA 论文中的模型均为 **大规模闭源模型 + 全文上下文**，与
 
 ---
 
-## 十、待完成实验
+## 十、实验 E — MSC (Multi-Session Chat) 跨 Benchmark 验证
+
+### Benchmark 概况
+
+- **论文**: *Beyond Goldfish Memory: Long-Term Open-Domain Conversation*, Xu et al., ACL 2022
+- **数据**: `nayohan/multi_session_chat` (HuggingFace)
+- **评测指标**: Perplexity (PPL)，按 session 分别报告，与原始论文 Table 7 对齐
+- **评测协议**: 对每个 session T (T≥2)，基于 sessions 0~T-1 的记忆，计算 session T 对话文本的 PPL
+
+### 数据统计
+
+| Split | 对话数 | Embeddings | Sessions 分布 |
+|-------|--------|-----------|--------------|
+| train | 8,939 | 17,940 | 4,939×1s + 2,999×3s + 1,001×4s |
+| validation | 1,000 | 3,000 | 500×1s + 500×5s |
+| test | 501 | 2,505 | 501×5s（含 OOD session 5） |
+
+### D2L 设置
+
+- **D2L checkpoint**: `trained_d2l/mistral_7b_d2l/checkpoint-20000/pytorch_model.bin`（off-the-shelf，**未在 MSC 上微调**）
+- **注**: 在 MSC 上微调 D2L 后再训 CMP 的实验尚未进行（参考 PERMA 经验：微调 D2L 可带来额外 +6.7pp 提升）
+
+### CMP 训练设置
+
+- **预计算**: 各 split 各 session → frozen Encoder + Aggregator → lora_emb 缓存到磁盘
+- **训练样本**: 4,000 个多 session 对话 → 展开为 9,001 个 (memory, target) 样本
+- **训练损失**: Causal LM CE loss（预测 session T 全部 tokens），非 MCQ
+- **优化器**: AdamW, lr=1e-3, wd=0.01, CosineAnnealingLR
+- **max_target_tokens**: 512
+- **训练时间**: 10 epochs × 1810s ≈ 5 小时
+
+### CMP 训练日志
+
+| Epoch | train_loss | val_ppl | S2 | S3 | S4 | S5 |
+|-------|-----------|---------|------|------|------|------|
+| 1 | 1.9920 | 7.17 | 7.38 | 7.13 | 7.11 | 7.07 |
+| 3 | 1.9414 | 7.08 | 7.29 | 7.03 | 7.02 | 6.97 |
+| 5 | 1.9294 | 7.04 | 7.25 | 7.00 | 6.98 | 6.93 |
+| **9** | **1.9161** | **7.03** | **7.23** | **6.98** | **6.97** | **6.93** |
+| 10 | 1.9148 | 7.03 | 7.23 | 6.98 | 6.97 | 6.93 |
+
+### Test Set 结果（501 dialogues × 4 sessions = 2,004 samples）
+
+| Method | 备注 | Overall PPL ↓ | S2 | S3 | S4 | S5 | Opening PPL ↓ |
+|--------|------|-------------|------|------|------|------|-------------|
+| **CMP + oos-D2L** | 门控递归合并（off-the-shelf D2L） | **6.97** | **6.92** | **6.94** | **6.97** | 7.05 | 9.91 |
+| Full Context | 全部历史 session 塞进 prompt | 7.08 | 7.29 | 7.05 | **6.99** | **6.99** | **7.08*** |
+| Standalone | 无记忆，直接 forward | 9.53 | 9.43 | 9.62 | 9.58 | 9.50 | 81.34 |
+| D2L Single | 仅用前一个 session 的 LoRA | 12.19 | 11.52 | 12.41 | 12.37 | 12.49 | 382.21 |
+
+*Full Context 的 Opening PPL 为近似值（取整体 session PPL）
+
+### 关键发现
+
+1. **CMP (6.97) 超过 Full Context (7.08)**：参数化记忆比把全文塞进 32K 上下文窗口更有效，且不占用任何上下文 tokens
+2. **D2L Single (12.19) 比 Standalone (9.53) 更差**：off-the-shelf D2L 为文档设计，直接用于对话数据 LoRA 反而"污染"模型 → CMP 的 gate 学习是必要的
+3. **Opening PPL 对比**：CMP (9.91) vs Standalone (81.34)，↓87.8%，session 开头的跨 session 引用被有效捕获
+4. **PPL 随 session 数递减**（训练时）：S2 > S3 > S4 > S5，CMP 积累的记忆越多预测越准确
+5. **仅用 off-the-shelf D2L**：未在 MSC 上微调 D2L，CMP gate 的 52 万参数就足以学会正确融合
+
+### 待完成（MSC）
+
+- [ ] 在 MSC 上微调 D2L → 再训 CMP（预期进一步降低 PPL）
+- [ ] Session Opening PPL 的精确计算（当前 full_context 模式使用近似值）
+
+---
+
+## 十一、待完成实验（全局）
 
 ### 已完成 ✅
-- [x] Standalone / RAG baseline
-- [x] CMP 架构设计与实现（Level 1 线性门控）
-- [x] CMP 训练（off-the-shelf D2L + fine-tuned D2L）
+- [x] PERMA: Standalone / RAG baseline
+- [x] PERMA: CMP 架构设计与实现（Level 1 线性门控）
+- [x] PERMA: CMP 训练（off-the-shelf D2L + fine-tuned D2L）
+- [x] MSC: CMP + off-the-shelf D2L 全流程（precompute → train → eval）
+- [x] MSC: Baselines（standalone / full_context / d2l_single）
 
 ### 待完成
+- [ ] LoCoMo benchmark 评测（ACL 2024，超长对话 QA）
+- [ ] MSC: 微调 D2L + CMP
 - [ ] Leave-one-out 交叉验证（10 个 user）
 - [ ] CMP Level 2 (GRU gate) / Level 3 (Cross-Attention) 对比
 - [ ] 消融实验（init_bias / d_latent / lr 敏感性分析）
-- [ ] 在 MSC / MemoryArena / MemoryCD 上评测
 - [ ] Gate 激活模式可视化（z 值分布随 session 的变化）
 - [ ] 计算效率对比（CMP 增量更新 vs Oracle 全量重编译的时间/显存）
 
 ---
 
-## 十一、调试记录
+## 十二、调试记录
 
 1. **PERMA options 解析错误**: `options` 字段是 `"A: text\nB: text\n..."` 格式的字符串，初始代码当作 list 迭代导致每个字符变成一个"选项"(2621个)，prompt 严重溢出 → 修复: 实现 `_parse_options()`
 2. **deepcopy 非叶 tensor 失败**: naive_merge 中 `copy.deepcopy(model.generated_loras)` 报错 → 修复: 改用 `detach().clone()`
 3. **训练 OOM**: Mistral-7B + 大 packed_len 超出 80GB 显存 → 修复: 降低 `max_packed_inp_len/ctx_len` 到 768，启用 `quantize_ctx_encoder`，`gradient_accumulation_steps: 16`
 4. **accelerate 多卡冲突**: `accelerate launch --num_processes=1` 与多卡 config 冲突 → 修复: 直接用 `CUDA_VISIBLE_DEVICES=0 uv run python train.py`
 
-## 十二、文件说明
+## 十三、文件说明
 
 - `data_adapter.py`: PERMA 数据加载与格式转换（含 `_parse_options` 修复）
 - `diagnostic_eval.py`: 评测脚本（oracle / single_shot / naive_merge / no_lora / standalone / rag / cmp）
