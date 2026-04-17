@@ -252,7 +252,7 @@ def evaluate(args):
 
             if args.mode == "full_context":
                 ctx = "\n\n".join(
-                    f"[Session {s['session_id']}]\n{s}"
+                    f"[Session {i+1}]\n{s}"
                     for i, s in enumerate(conv["session_texts"])
                 )
                 chat = [{"role": "user", "content": (
