@@ -69,6 +69,15 @@ def load_cached_dialogues(emb_dir: str, split: str):
     return dialogues
 
 
+def disable_lora_hooks(model):
+    """移除 D2L 加载时注入的 lora_forward hooks，恢复原始 nn.Linear.forward。"""
+    layers = get_layers(model.base_model)
+    for layer_idx in model.hypernet.layer_indices:
+        for module_info in get_peft_modules(layers[layer_idx], model.peft_config):
+            module = module_info["module"]
+            module.forward = torch.nn.Linear.forward.__get__(module, type(module))
+
+
 def patch_model(model):
     layers = get_layers(model.base_model)
     for layer_idx in model.hypernet.layer_indices:
@@ -178,6 +187,8 @@ def evaluate(args):
 
     if args.mode in ("cmp", "d2l_single"):
         patch_model(model)
+    else:
+        disable_lora_hooks(model)
 
     print(f"\nLoading test embeddings from {args.emb_dir} ...")
     dialogues = load_cached_dialogues(args.emb_dir, args.split)
