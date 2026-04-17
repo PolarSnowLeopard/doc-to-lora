@@ -247,7 +247,7 @@ def evaluate(args):
 
         for qa in conv["qa"]:
             question = qa["question"]
-            gold_answer = str(qa["answer"])
+            gold_answer = str(qa.get("answer", qa.get("adversarial_answer", "")))
             category = qa["category"]
 
             if args.mode == "full_context":
