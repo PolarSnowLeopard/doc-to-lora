@@ -170,6 +170,13 @@ def train(args):
     os.makedirs(args.output_dir, exist_ok=True)
     all_fold_results = []
 
+    if args.fold is not None:
+        if args.fold < 0 or args.fold >= len(conv_ids):
+            print(f"Error: --fold must be in [0, {len(conv_ids)-1}]")
+            return
+        conv_ids = [conv_ids[args.fold]]
+        print(f"Running single fold: held-out = {conv_ids[0]}")
+
     for fold_idx, held_out_id in enumerate(conv_ids):
         print(f"\n{'='*60}")
         print(f"Fold {fold_idx+1}/{len(conv_ids)}: held-out = {held_out_id}")
@@ -358,4 +365,6 @@ if __name__ == "__main__":
     parser.add_argument("--wd", type=float, default=0.01)
     parser.add_argument("--init_bias", type=float, default=-2.0)
     parser.add_argument("--max_seq_len", type=int, default=512)
+    parser.add_argument("--fold", type=int, default=None,
+                        help="Only run this fold index (0-based). Default: all folds.")
     train(parser.parse_args())
