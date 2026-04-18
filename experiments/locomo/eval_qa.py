@@ -227,6 +227,10 @@ def evaluate(args):
     all_results = []
     cat_scores = {c: [] for c in QA_CATEGORIES}
 
+    if args.conv_ids:
+        conversations = [c for c in conversations if c["sample_id"] in args.conv_ids]
+        print(f"Filtered to {len(conversations)} conversations: {[c['sample_id'] for c in conversations]}")
+
     for conv in conversations:
         n_qa = len(conv["qa"])
         print(f"  {conv['sample_id']}: {conv['n_sessions']} sessions, {n_qa} QA pairs")
@@ -340,4 +344,6 @@ if __name__ == "__main__":
     parser.add_argument("--cmp_checkpoint", type=str, default="")
     parser.add_argument("--max_tokens", type=int, default=4096)
     parser.add_argument("--output_file", type=str, default="")
+    parser.add_argument("--conv_ids", type=str, nargs="*", default=None,
+                        help="Only evaluate these conversation IDs (e.g. conv-26)")
     evaluate(parser.parse_args())
