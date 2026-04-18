@@ -367,7 +367,76 @@ PERMA 论文中的模型均为 **大规模闭源模型 + 全文上下文**，与
 
 ---
 
-## 十一、待完成实验（全局）
+## 十一、实验 F — LoCoMo (ACL 2024) 超长对话 QA 验证
+
+### Benchmark 概况
+
+- **论文**: *Evaluating Very Long-Term Conversational Memory of LLM Agents*, Snap Research, ACL 2024
+- **代码**: `github.com/snap-research/locomo`
+- **数据**: 10 个超长对话（19-35 sessions, 300+ 轮, 9K-26K tokens）
+- **评测指标**: Token-level F1（with stemming），按 5 类 QA 分别报告
+- **QA 类别**: single-hop / multi-hop / temporal / commonsense / adversarial
+- **评测协议**: 给定全部对话历史作为记忆，对每个 QA 生成回答并计算 F1
+
+### 数据统计
+
+| 对话 | Sessions | QA Pairs | 特点 |
+|------|----------|----------|------|
+| conv-26 | 19 | 199 | |
+| conv-30 | 19 | 105 | |
+| conv-41 | 32 | 193 | |
+| conv-42 | 29 | 260 | 最多 QA |
+| conv-43 | 29 | 242 | |
+| conv-44 | 28 | 158 | |
+| conv-47 | 31 | 190 | |
+| conv-48 | 30 | 239 | |
+| conv-49 | 25 | 196 | |
+| conv-50 | 30 | 204 | |
+| **Total** | **avg 27.2** | **1,986** | |
+
+### 实验设置
+
+- **D2L checkpoint**: `trained_d2l/mistral_7b_d2l/checkpoint-20000/pytorch_model.bin`（off-the-shelf，未微调）
+- **CMP gate**: `experiments/msc/cmp_runs/run1/best_gate.pt`（**在 MSC 上训练，zero-shot 迁移到 LoCoMo**）
+- **注**: 未在 LoCoMo 上训练 gate（数据量仅 10 个对话），测试的是 gate 的跨 benchmark 泛化能力
+
+### Test Set 结果（10 conversations, 1,986 QA pairs）
+
+| Method | 备注 | Overall F1 ↑ | multi-hop | temporal | commonsense | single-hop | adversarial |
+|--------|------|------------|-----------|----------|-------------|------------|-------------|
+| Full Context | 全文塞进 prompt (~30K tokens) | **0.138** | **0.148** | **0.062** | 0.090 | **0.232** | 0.020 |
+| **CMP (zero-shot)** | MSC gate → LoCoMo 迁移 | 0.056 | 0.077 | 0.024 | **0.082** | 0.070 | 0.036 |
+| Standalone | 无任何上下文 | 0.041 | 0.066 | 0.007 | 0.047 | 0.042 | **0.047** |
+
+LoCoMo 论文参考值（不同模型，不直接可比）：GPT-3.5-turbo (full context) ≈ 0.29, GPT-4 (full context) ≈ 0.39
+
+### 关键发现
+
+1. **CMP (0.056) > Standalone (0.041)**：相对提升 +36.6%，zero-shot 迁移的 gate 确实编码了有用信息
+2. **CMP 在 4/5 类上优于 Standalone**：multi-hop +16.7%, temporal +243%, commonsense +74.5%, single-hop +66.7%
+3. **Full Context (0.138) >> CMP (0.056)**：与 MSC 结论相反。LoCoMo 的生成式 QA 需要从对话中精确提取事实，显式文本优势大
+4. **Adversarial 类有趣现象**：Full Context (0.020) < Standalone (0.047) — 全文反而让模型更容易被诱导
+5. **绝对值低是预期内的**：Mistral-7B 比 GPT-3.5/4 弱很多（论文中 GPT-3.5 full context 为 0.29，我们为 0.138）
+
+### 与其他 Benchmark 的 Story 对比
+
+| Benchmark | 评测方式 | CMP vs Standalone | CMP vs Full Context | D2L 状态 | Gate 状态 |
+|-----------|---------|-------------------|---------------------|---------|----------|
+| **PERMA** | MCQ Acc | 94.7% vs 68.0% (↑39%) | 超越 | 微调 | 训练 |
+| **MSC** | PPL | 6.97 vs 9.53 (↓27%) | **超越** (6.97 vs 7.08) | off-the-shelf | 训练 |
+| **LoCoMo** | QA F1 | 0.056 vs 0.041 (↑37%) | 未超越 (0.056 vs 0.138) | off-the-shelf | **zero-shot** |
+
+结论：CMP 在所有三个 benchmark 上均一致性地优于 Standalone baseline。在 D2L 微调 + gate 训练的设定下（PERMA、MSC），CMP 可以达到或超越 Full Context；在 zero-shot 迁移的设定下（LoCoMo），CMP 仍有显著提升但与 Full Context 有差距。
+
+### 待完成（LoCoMo）
+
+- [ ] Leave-one-out 训练：9 个对话训练 gate，1 个对话评测（QA CE loss）
+- [ ] 在 LoCoMo 上微调 D2L → 再训 CMP
+- [ ] 生成结果定性分析（检查模型输出质量）
+
+---
+
+## 十二、待完成实验（全局）
 
 ### 已完成 ✅
 - [x] PERMA: Standalone / RAG baseline
@@ -375,11 +444,13 @@ PERMA 论文中的模型均为 **大规模闭源模型 + 全文上下文**，与
 - [x] PERMA: CMP 训练（off-the-shelf D2L + fine-tuned D2L）
 - [x] MSC: CMP + off-the-shelf D2L 全流程（precompute → train → eval）
 - [x] MSC: Baselines（standalone / full_context / d2l_single）
+- [x] LoCoMo: CMP zero-shot 迁移评测
+- [x] LoCoMo: Baselines（standalone / full_context）
 
 ### 待完成
-- [ ] LoCoMo benchmark 评测（ACL 2024，超长对话 QA）
+- [ ] LoCoMo: Leave-one-out 训练 + 评测
 - [ ] MSC: 微调 D2L + CMP
-- [ ] Leave-one-out 交叉验证（10 个 user）
+- [ ] PERMA: Leave-one-out 交叉验证（10 个 user）
 - [ ] CMP Level 2 (GRU gate) / Level 3 (Cross-Attention) 对比
 - [ ] 消融实验（init_bias / d_latent / lr 敏感性分析）
 - [ ] Gate 激活模式可视化（z 值分布随 session 的变化）
@@ -387,14 +458,14 @@ PERMA 论文中的模型均为 **大规模闭源模型 + 全文上下文**，与
 
 ---
 
-## 十二、调试记录
+## 十三、调试记录
 
 1. **PERMA options 解析错误**: `options` 字段是 `"A: text\nB: text\n..."` 格式的字符串，初始代码当作 list 迭代导致每个字符变成一个"选项"(2621个)，prompt 严重溢出 → 修复: 实现 `_parse_options()`
 2. **deepcopy 非叶 tensor 失败**: naive_merge 中 `copy.deepcopy(model.generated_loras)` 报错 → 修复: 改用 `detach().clone()`
 3. **训练 OOM**: Mistral-7B + 大 packed_len 超出 80GB 显存 → 修复: 降低 `max_packed_inp_len/ctx_len` 到 768，启用 `quantize_ctx_encoder`，`gradient_accumulation_steps: 16`
 4. **accelerate 多卡冲突**: `accelerate launch --num_processes=1` 与多卡 config 冲突 → 修复: 直接用 `CUDA_VISIBLE_DEVICES=0 uv run python train.py`
 
-## 十三、文件说明
+## 十四、文件说明
 
 - `data_adapter.py`: PERMA 数据加载与格式转换（含 `_parse_options` 修复）
 - `diagnostic_eval.py`: 评测脚本（oracle / single_shot / naive_merge / no_lora / standalone / rag / cmp）
